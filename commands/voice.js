@@ -21,7 +21,9 @@ module.exports = {
 			const connection = joinVoiceChannel({
 				channelId: channel.id,
 				guildId: interaction.guild.id,
-				adapterCreator: interaction.guild.voiceAdapterCreator
+				adapterCreator: interaction.guild.voiceAdapterCreator,
+				selfDeaf: false,
+				selfMute: false
 			});
 			
 			await interaction.reply({ content: `Joined ${channel.name}!`, ephemeral: true });

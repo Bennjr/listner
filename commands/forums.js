@@ -2,7 +2,7 @@ const { SlashCommandBuilder, ChannelType } = require("discord.js");
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName("Save")
+        .setName("save")
         .setDescription("Begin saving process")
         .addChannelOption(option =>
             option.setName('channel')
