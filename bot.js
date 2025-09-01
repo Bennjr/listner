@@ -12,7 +12,7 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildVoiceStates
     ]
-})
+}) 
 
 client.slashCommands = new Collection()
 
