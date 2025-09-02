@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, ChannelType } = require("discord.js");
 const childProcess = require("child_process");
+const {joinVoiceChannel} = require("@discordjs/voice")
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -23,7 +24,7 @@ module.exports = {
             geminiProcess.on('error', async (err) => {
                 console.error('Gemini process error:', err);
                 await interaction.editReply(`Error: ${err.message}`);
-                reject(err);
+                reject(err); 
             });
 
             geminiProcess.on('exit', async (code) => {
