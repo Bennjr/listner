@@ -2,6 +2,11 @@ const { Client, GatewayIntentBits, Collection, REST, Routes } = require("discord
 const fs = require("fs");
 const path = require("path");
 
+// Fix SSL certificate issues for corporate networks
+process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;
+process.env["HTTPS_PROXY"] = "";
+process.env["HTTP_PROXY"] = "";
+
 const TEMP_KEY = JSON.parse(fs.readFileSync("server/config.json")).API_KEY
 const GUILD_ID = JSON.parse(fs.readFileSync("server/config.json")).GUILD_ID
 
