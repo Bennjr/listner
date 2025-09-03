@@ -2,3 +2,4 @@
 config.json
 .waw
 .pcm
+/__pycache__

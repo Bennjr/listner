@@ -7,8 +7,15 @@ process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;
 process.env["HTTPS_PROXY"] = "";
 process.env["HTTP_PROXY"] = "";
 
-const TEMP_KEY = JSON.parse(fs.readFileSync("server/config.json")).API_KEY
-const GUILD_ID = JSON.parse(fs.readFileSync("server/config.json")).GUILD_ID
+let TEMP_KEY;
+let GUILD_ID;
+try {
+    const config = JSON.parse(fs.readFileSync("server/config.json"));
+    TEMP_KEY = config.API_KEY;
+    GUILD_ID = config.GUILD_ID;
+} catch (err) {
+    console.error("Missing APIs or missing config.json");
+}
 
 const client = new Client({
     intents: [
