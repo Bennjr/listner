@@ -145,7 +145,7 @@ function startIndividualRecording(connection, userId, basePath) {
             const { PythonShell } = require('python-shell');
             const options = {
                 scriptPath: 'server/scripts',
-                args: [chunkFile, userId, recording.username] 
+                args: [chunkFile, userId, recording.username, sessionId] 
             };
             PythonShell.run('whisper.py', options, function(err, results) {
                 if (err) {

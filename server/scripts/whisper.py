@@ -1,40 +1,75 @@
 import sys
-import wave
 from pathlib import Path
 import openai_whisper as whisper
 import datetime
+import subprocess
+import os
+
+def convert(pcm_file, mp3_file=None, cleanup_pcm=True):
+    if mp3_file is None:
+        mp3_file = Path(pcm_file).with_suffix('.mp3')
+    
+    try:
+        cmd = [
+            'ffmpeg',
+            '-y',  
+            '-f', 's16le',  
+            '-ar', '48000', 
+            '-ac', '2', 
+            '-i', str(pcm_file), 
+            '-codec:a', 'libmp3lame', 
+            '-b:a', '128k', 
+            '-loglevel', 'error', 
+            str(mp3_file) 
+        ]
+
+        print(f"Converting {pcm_file} to {mp3_file}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        if os.path.exists(mp3_file) and os.path.getsize(mp3_file) > 0:
+            print(f"Succesfully converted: {mp3_file}")
+
+            if cleanup_pcm:
+                os.remove(pcm_file)
+                print(f"Removed {pcm_file}")
+            return str(mp3_file)
+        else:
+            raise Exception("MP3 file does not exist or is empty")
+    except subprocess.CalledProcessError as e:
+        print(f"FFmpeg error: {e}")
+        raise
+    except Exception as e:
+        print(f"Error converting {pcm_file}: {e}")
+        raise
+    
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python whisper.py <audio_file>")
+    if len(sys.argv) < 5:
+        print("Usage: python whisper.py <chunk_file> <user_id> <username> <session_id>")
         sys.exit(1)
 
-    audio_path = sys.argv[1]
-    print(f"Processing PCM file: {audio_path}")
+    chunk_file = sys.argv[1] 
+    user_id = sys.argv[2]       
+    username = sys.argv[3]        
+    session_id = sys.argv[4]
 
-    with open(audio_path, 'rb') as pcm_file:
-        pcm_data = pcm_file.read()
-
-    wav_name = Path(audio_path).stem + ".wav"
-    wav_path = Path(f"server/chunks/audio/{datetime.datetime.now().strftime('%Y-%m-%d')}/wav") / wav_name
-    wav_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with wave.open(str(wav_path), 'wb') as wav_file:
-        wav_file.setnchannels(2)    
-        wav_file.setsampwidth(2)    
-        wav_file.setframerate(48000)  
-        wav_file.writeframes(pcm_data)
+    if not os.path.exists(chunk_file):
+        print(f"Chunk file {chunk_file} does not exist")
+        sys.exit(1)
     
-    print(f"Converted to WAV: {wav_path}")
+    try:
+        mp3_file = convert(chunk_file, cleanup_pcm=True)
+    except Exception as e:
+        print(f"Error converting {chunk_file}: {e}")
+        sys.exit(1)
     
-    model = whisper.load_model("base")
-    result = model.transcribe(str(wav_path))
-
-    stripped_userID = ""
-    stripped_sessionID = ""
-
-    raw_file = Path(f"server/transcriptions/{datetime.datetime.now().strftime('%Y-%m-%d')}/{stripped_sessionID}/{stripped_userID}") / wav_path.stem
-    raw_file = raw_file.with_suffix(".txt")
-    raw_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(raw_file, "a", encoding="utf-8") as f:
-        f.write(result["text"] + "\n"+ "\n")
+    try:
+        model = whisper.load_model("base")
+        result = model.transcribe(
+            mp3_file,
+            initial_prompt="Bibel studie, forvent bok navn og navn i Bibelen",
+            language="no"
+        )
+    except Exception as e:
+        print(f"Error transcribing {mp3_file}: {e}")
+        sys.exit(1)
