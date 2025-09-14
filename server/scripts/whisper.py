@@ -1,3 +1,4 @@
+from asyncio.proactor_events import base_events
 import sys
 from pathlib import Path
 import openai_whisper as whisper
@@ -45,6 +46,8 @@ def convert(pcm_file, mp3_file=None, cleanup_pcm=True):
     
 
 if __name__ == "__main__":
+    print("We got to the start of the whisper.py")
+
     if len(sys.argv) < 5:
         print("Usage: python whisper.py <chunk_file> <user_id> <username> <session_id>")
         sys.exit(1)
@@ -65,25 +68,77 @@ if __name__ == "__main__":
         sys.exit(1)
     
     try:
+        print("Trying to load the model")
         model = whisper.load_model("base")
+        print("Model loaded, starting transcription")
         result = model.transcribe(
             mp3_file,
             initial_prompt="Bibel studie, forvent bok navn og navn i Bibelen",
             language="no"
         )
+        print("Transcription finished")
 
-        
-        session_path = f"server/chunks/audio/{datetime.datetime.now().strftime('%Y-%m-%d')}/{session_id}"
-        os.makedirs(session_path, exist_ok=True)
-        
-        user_json = os.path.join(session_path, f"{user_id}.json")
-        with open(user_json, "w") as f:
-            json.dump(result, f)
+        result["created_at"] = datetime.datetime.now().isoformat()
+        result["user_id"] = user_id
+        result["username"] = username
+        result["session_id"] = session_id
 
-        mixed_json = os.path.join(session_path, "mixed.json")
-        with open(mixed_json, "w") as f:
-            json.dump(result, f)
+        with open("server/metadata.json", "r") as f:
+            metadata = json.load(f)
+            basepath = metadata["basepath"]
+
+        if not basepath:
+            print("Error: basepath missing in metadata.json")
+            sys.exit(1)
+
+        try:
+            if os.path.exists(user_json):
+                with open(user_json, "r", encoding="utf-8") as f:
+                    existing_data = json.load(f)
+                    if not isinstance(existing_data, list):
+                        existing_data = [existing_data]
+            else:
+                existing_data = []
+            
+            existing_data.append(result)
+            
+            with open(user_json, "w", encoding="utf-8") as f:
+                json.dump(existing_data, f, indent=2, ensure_ascii=False)
+            print(f"Saved user transcription to: {user_json}")
+        except Exception as e:
+            print(f"Error saving user JSON: {e}")
+
+        mixed_text = os.path.join(archive_dir, "mixed.txt")
+        try:
+            with open(mixed_text, "a", encoding="utf-8") as f:  # Fixed: use mixed_text variable
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"[{timestamp}] {username}: {result['text']}\n\n")
+            print(f"Appended to mixed text file: {mixed_text}")
+        except Exception as e:
+            print(f"Error writing to mixed text file: {e}")
+
+        mixed_json = os.path.join(archive_dir, "mixed_transcriptions.json")
+        try:
+            if os.path.exists(mixed_json):
+                with open(mixed_json, "r", encoding="utf-8") as f:
+                    existing_mixed = json.load(f)
+                    if not isinstance(existing_mixed, list):
+                        existing_mixed = [existing_mixed]
+            else:
+                existing_mixed = []
+            
+            existing_mixed.append(result)
+            
+            with open(mixed_json, "w", encoding="utf-8") as f:
+                json.dump(existing_mixed, f, indent=2, ensure_ascii=False)
+            print(f"Saved to mixed JSON: {mixed_json}")
+        except Exception as e:
+            print(f"Error saving mixed JSON: {e}")
+
+        print("Transcription process completed successfully")
 
     except Exception as e:
-        print(f"Error transcribing {mp3_file}: {e}")
+        print(f"Error during transcription: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)

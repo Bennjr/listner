@@ -1,5 +1,6 @@
 /node_modules
+/__pycache__
+/chunks
 config.json
 .waw
 .pcm
-/__pycache__

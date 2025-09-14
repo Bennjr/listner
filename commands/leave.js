@@ -1,5 +1,6 @@
 const {joinVoiceChannel, getVoiceConnection } = require("@discordjs/voice")
 const {SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder} = require("discord.js")
+const fs = require("fs");
 
 module.exports = {
 	data: new SlashCommandBuilder()
@@ -12,9 +13,9 @@ module.exports = {
 		}
 		connection.destroy();
 
-		if (isRecordingActive) {
-			console.log(`Recording is active, stopping it before leaving voice channel`);
-			await module.exports.stopAllRecordings();
+		if (JSON.parse(fs.readFileSync("server/metadata.json", "utf8")).recState === true) {
+			const results = module.exports.stopAllRecordings();
+			await interaction.reply(`Stopped recording. Processed ${results.individualRecordings.length} individual recordings.`);
 
 			const transcript = 'This is the transcribed text of your recording.'; 
 			const recordingLength = '1:45';
@@ -31,16 +32,16 @@ module.exports = {
 				)
 				.setFooter({ text: 'Click a button below to save or discard' });
 
-		const row = new ActionRowBuilder()
-			.addComponents(
-				new ButtonBuilder()
-					.setCustomId('save')
-					.setLabel('Save')
-					.setStyle(ButtonStyle.Success),
-				new ButtonBuilder()
-					.setCustomId('discard')
-					.setLabel('Discard')
-					.setStyle(ButtonStyle.Danger)
+			const row = new ActionRowBuilder()
+				.addComponents(
+					new ButtonBuilder()
+						.setCustomId('save')
+						.setLabel('Save')
+						.setStyle(ButtonStyle.Success),
+					new ButtonBuilder()
+						.setCustomId('discard')
+						.setLabel('Discard')
+						.setStyle(ButtonStyle.Danger)
 				);
 
 			await interaction.reply({ embeds: [embed], components: [row] });
@@ -51,44 +52,46 @@ module.exports = {
 			collector.on('collect', async i => {
 				if (i.customId === 'save') {
 					await i.update({ content: 'Transcript saved!', components: [] });
-					const channel = interaction.options.getChannel('channel');
-        console.log(`Selected channel: ${channel.name}`);
 
-        await interaction.reply("Starting save process...");
+					const metadata = JSON.parse(fs.readFileSync("server/metadata.json"));
+					const basepath = metadata.basepath;
 
-        return new Promise((resolve, reject) => {
-            const geminiProcess = childProcess.fork("./utils/gemini.js");
+					await interaction.reply("Starting save process...");
 
-            geminiProcess.on('error', async (err) => {
-                console.error('Gemini process error:', err);
-                await interaction.editReply(`Error: ${err.message}`);
-                reject(err); 
-            });
+					return Promise.all([
+						runChild("./utils/gemini.js", "Gemini"),
+						runChild("./utils/pcm-to-mp3.js", "Convert")
+					]).then(async () => {
+						console.log("Both Gemini and Convertion done");
+					
+						const threadChannel = await channel.threads.create({
+							name: `Summering av Bibelstudie: ${new Date().toLocaleDateString()}`,
+							autoArchiveDuration: 10080,
+							reason: "Automated"
+						});
 
-            geminiProcess.on('exit', async (code) => {
-                if (code === 0) {
-                    console.log('Child process "Gemini" done');
-
-                    try {
-                        const threadChannel = await channel.threads.create({
-                            name: `Summering av Bibelstudie: ${new Date().toLocaleDateString()}`,
-                            autoArchiveDuration: 10080,
-                            reason: "Automated"
-                        });
-                        console.log(threadChannel);
-                    } catch (error) {
-                        console.error(error);
-                    }
-
-                    await interaction.editReply(`Save process completed! Saved to ${channel.name}`);
-                    resolve();
-                } else {
-                    console.error(`Gemini process exited with code ${code}`);
-                    await interaction.editReply(`Process failed with exit code ${code}`);
-                    reject(new Error(`exit code ${code}`));
-                }
-            });
-        });
+						const textContent = fs.readFileSync(`${basepath}/archive/mixed.txt`, "utf8");
+						await threadChannel.send({
+							content: textContent,
+							files: [
+								{
+									attachment: `${basepath}/archive/summerized.txt`,
+									name: "summerized.txt"
+								},
+								{
+									attachment: `${basepath}/archive/mixed.txt`,
+									name: "mixed.mp3"
+								}
+							]
+						})
+					
+						await interaction.editReply(`Save process completed! Saved to ${channel.name}`);
+						collector.stop();
+					}).catch(async (err) => {
+						console.error("Process error:", err);
+						await interaction.editReply(`Error: ${err.message}`);
+						throw err;
+					});
 				} else if (i.customId === 'discard') {
 					await i.update({ content: 'Transcript discarded.', components: [] });
 					// DELETE FILES
@@ -107,8 +110,8 @@ module.exports = {
 			collector.on('end', collected => {
 				if (collected.size === 0) {
 					interaction.editReply({ content: 'No action taken. Collector timed out.', components: [] });
-			}
-		});
-	}
+				}
+			});
+		}
 	}
 }

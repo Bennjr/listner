@@ -17,6 +17,13 @@ try {
     console.error("Missing APIs or missing config.json");
 }
 
+fs.writeFileSync("server/metadata.json", JSON.stringify({
+            basepath: "",
+            sessionId: "",
+            currentDate: "",
+            recState: false,
+        }));
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
