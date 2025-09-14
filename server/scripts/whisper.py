@@ -4,6 +4,7 @@ import openai_whisper as whisper
 import datetime
 import subprocess
 import os
+import json
 
 def convert(pcm_file, mp3_file=None, cleanup_pcm=True):
     if mp3_file is None:
@@ -70,6 +71,19 @@ if __name__ == "__main__":
             initial_prompt="Bibel studie, forvent bok navn og navn i Bibelen",
             language="no"
         )
+
+        
+        session_path = f"server/chunks/audio/{datetime.datetime.now().strftime('%Y-%m-%d')}/{session_id}"
+        os.makedirs(session_path, exist_ok=True)
+        
+        user_json = os.path.join(session_path, f"{user_id}.json")
+        with open(user_json, "w") as f:
+            json.dump(result, f)
+
+        mixed_json = os.path.join(session_path, "mixed.json")
+        with open(mixed_json, "w") as f:
+            json.dump(result, f)
+
     except Exception as e:
         print(f"Error transcribing {mp3_file}: {e}")
         sys.exit(1)

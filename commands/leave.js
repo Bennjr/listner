@@ -51,12 +51,57 @@ module.exports = {
 			collector.on('collect', async i => {
 				if (i.customId === 'save') {
 					await i.update({ content: 'Transcript saved!', components: [] });
-					// logic here
+					const channel = interaction.options.getChannel('channel');
+        console.log(`Selected channel: ${channel.name}`);
+
+        await interaction.reply("Starting save process...");
+
+        return new Promise((resolve, reject) => {
+            const geminiProcess = childProcess.fork("./utils/gemini.js");
+
+            geminiProcess.on('error', async (err) => {
+                console.error('Gemini process error:', err);
+                await interaction.editReply(`Error: ${err.message}`);
+                reject(err); 
+            });
+
+            geminiProcess.on('exit', async (code) => {
+                if (code === 0) {
+                    console.log('Child process "Gemini" done');
+
+                    try {
+                        const threadChannel = await channel.threads.create({
+                            name: `Summering av Bibelstudie: ${new Date().toLocaleDateString()}`,
+                            autoArchiveDuration: 10080,
+                            reason: "Automated"
+                        });
+                        console.log(threadChannel);
+                    } catch (error) {
+                        console.error(error);
+                    }
+
+                    await interaction.editReply(`Save process completed! Saved to ${channel.name}`);
+                    resolve();
+                } else {
+                    console.error(`Gemini process exited with code ${code}`);
+                    await interaction.editReply(`Process failed with exit code ${code}`);
+                    reject(new Error(`exit code ${code}`));
+                }
+            });
+        });
 				} else if (i.customId === 'discard') {
 					await i.update({ content: 'Transcript discarded.', components: [] });
-					// logic here
+					// DELETE FILES
+					
+					const metadata = JSON.parse(fs.readFileSync("server/metadata.json"));
+					const basepath = metadata.basepath;
+
+
+					if (fs.existsSync(basepath)) {
+						fs.rmdirSync(basepath, { recursive: true });
+					}
+					collector.stop();
 				}
-				collector.stop();
 			});
 
 			collector.on('end', collected => {

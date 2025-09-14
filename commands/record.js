@@ -38,6 +38,10 @@ module.exports = {
 
         const basePath = `server/chunks/audio/${currentDate}/${sessionId}`;
 
+        fs.writeFileSync("server/metadata.json", JSON.stringify({
+            basepath: basePath
+        }));
+
         const foldersToCreate = [
             `${basePath}/users`,
             `${basePath}/archive`,
