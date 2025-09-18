@@ -1,7 +1,7 @@
 from asyncio.proactor_events import base_events
 import sys
 from pathlib import Path
-import openai_whisper as whisper
+import whisper
 import datetime
 import subprocess
 import os

@@ -6,10 +6,9 @@ const execAsync = promisify(exec);
 
 async function convert() {
     try {
-        const metadata = JSON.parse(fs.readFileSync("server/metadata.json"));
-        const basepath = metadata.basepath;
-        const pcmPath = `${basepath}/archive/mixed.pcm`;
-        const mp3Path = `${basepath}/archive/mixed.mp3`;
+        const basepath = "/home/benjamin/Documents/repo/listner/versions/v0.2/server/recs/2025-09-18/a5dc366c-ca2b-4bdd-8927-2b22222d3bca";
+        const pcmPath = `${basepath}/users/694519991206150184/chunks/chunk_1.pcm`;
+        const mp3Path = `${basepath}/users/694519991206150184/chunks/chunk_1.mp3`;
 
         console.log("Converting PCM to MP3...");
 
