@@ -6,7 +6,7 @@ const execAsync = promisify(exec);
 
 async function convert() {
     try {
-        const basepath = "/home/benjamin/Documents/repo/listner/versions/v0.2/server/recs/2025-09-18/a5dc366c-ca2b-4bdd-8927-2b22222d3bca";
+        const basepath = "C:\\Users\\edu8136622\\Documents\\repo\\listner\\versions\\v0.4\\listner\\server\\recs\\2025-09-19\\379921ef-d740-49cd-b236-515a12dc3d61";
         const pcmPath = `${basepath}/users/694519991206150184/chunks/chunk_1.pcm`;
         const mp3Path = `${basepath}/users/694519991206150184/chunks/chunk_1.mp3`;
 
