@@ -13,6 +13,8 @@ const userProcessing = new Map();
 const activeUserRecordings = new Map();
 const userChunkCounters = new Map(); 
 const chunkQueues = new Map();
+const activeSubscriptions = new Map();
+const userCurrentlyChunking = new Map();
 let mixedArchiveRecording = null;
 let recState = false;
 let currentConnection = null;
@@ -75,17 +77,32 @@ module.exports = {
     await interaction.reply(`Started recording, session ID: ${sessionId}`);
 
     // SPEAKING HANDLER --------------------------------------
-    const speakingHandler = (speakingUserId) => {
+    const speakingHandler = (speakingUserId) => {        
+        // Setup user if new
         if (!activeUserRecordings.has(speakingUserId)) {
             console.log(`New user detected: ${speakingUserId}`);
             setupUserRecording(speakingUserId, basePath, sessionId);
             setupUserMixedArchive(connection, speakingUserId);
+            userCurrentlyChunking.set(speakingUserId, false);
+        }
+        
+        // CRITICAL: Only create chunk if user is not currently chunking
+        if (userCurrentlyChunking.get(speakingUserId)) {
+            console.log(`User ${speakingUserId} already has active chunk, ignoring`);
+            return;
         }
         
         startUserChunking(connection, speakingUserId);
     };
     
-    connection.receiver.speaking.on("start", speakingHandler);
+    connection.receiver.speaking.on("start", (userId) => {
+        console.log(`${userId} start`);
+        speakingHandler(userId);
+    });
+
+    connection.receiver.speaking.on("end", (userId) => {
+        console.log(`${userId} end`);
+    });
 
     //HANDLE CONNECTION ERRORS ---------------------------------
     console.log(`Succesfully setup mixed archive for session ${sessionId}`);
@@ -140,6 +157,19 @@ function startUserChunking(connection, userId) {
         return;
     }
 
+    // Mark user as currently chunking
+    userCurrentlyChunking.set(userId, true);
+
+    // Clean up previous subscription to prevent memory leaks
+    if (activeSubscriptions.has(userId)) {
+        const prevSub = activeSubscriptions.get(userId);
+        console.log(`Cleaning up previous subscription for user ${userId}`);
+        prevSub.stream?.destroy();
+        prevSub.decoder?.destroy();
+        prevSub.output?.destroy();
+        activeSubscriptions.delete(userId);
+    }
+
     const chunkCounter = userChunkCounters.get(userId) + 1;
     userChunkCounters.set(userId, chunkCounter);
 
@@ -147,8 +177,8 @@ function startUserChunking(connection, userId) {
 
     const chunkStream = connection.receiver.subscribe(userId, {
         end: {
-            behaviour: EndBehaviorType.AfterSilence, // Fixed: correct spelling
-            duration: 1000, // Increased from 500ms
+            behaviour: EndBehaviorType.AfterSilence,
+            duration: 2000, 
         },
     });
 
@@ -159,52 +189,75 @@ function startUserChunking(connection, userId) {
     });
 
     const chunksFolder = recording.chunksFolder;
-    const chunkFile = `${chunksFolder}/${userId}_chunk_${Date.now()}.pcm`;
+    const chunkFile = `${chunksFolder}/${userId}_chunk_${chunkCounter}_${Date.now()}.pcm`;
+
     const output = fs.createWriteStream(chunkFile);
-    const chunkTime = Date.now();
+    const chunkStartTime = Date.now();
+
+    chunkStream.on('data', (chunk) => {
+        decoder.write(chunk);
+    });
 
     chunkStream.on("error", (error) => {
         console.error(`Error receiving chunk for user ${userId}:`, error);
+        userCurrentlyChunking.set(userId, false); 
     });
 
     decoder.on("error", (error) => {
         console.error(`Error decoding chunk for user ${userId}:`, error);
+        userCurrentlyChunking.set(userId, false);
     });
 
-    chunkStream.pipe(decoder).pipe(output);
+    output.on("error", (error) => {
+        console.error(`Error writing chunk for user ${userId}:`, error);
+        userCurrentlyChunking.set(userId, false); 
+    });
+
+    chunkStream.on('end', () => {
+        console.log(`Chunk stream ended for user ${userId}`);
+        decoder.end();
+    });
+
+    decoder.pipe(output);
 
     output.on("finish", () => {
         const chunkEndTime = Date.now();
-        const chunkDuration = chunkEndTime - chunkTime;
-        console.log(`Chunk for user ${userId} finished: ${chunkDuration}ms`);
+        const chunkDuration = chunkEndTime - chunkStartTime;
+        
+        userCurrentlyChunking.set(userId, false);
+        
+        activeSubscriptions.delete(userId);
+        
+        console.log(`Chunk ${chunkCounter} finished for user ${userId}: ${chunkDuration}ms`);
 
         try {
             const chunkStats = fs.statSync(chunkFile);
             const chunkSize = chunkStats.size;
         
-            console.log(`Chunk ${chunkCounter} completed: ${chunkDuration}ms, ${chunkSize} bytes`);
+            console.log(`Chunk ${chunkCounter} stats: ${chunkDuration}ms, ${chunkSize} bytes`);
 
-            if (chunkDuration < 750 || chunkSize < 48000) {
+            // Filter out noise chunks
+            if (chunkDuration < 1000 || chunkSize < 50000) {
                 console.log(`Filtering out noise chunk ${chunkCounter} (${chunkDuration}ms, ${chunkSize} bytes)`);
                 fs.unlink(chunkFile, (err) => {
-                if (err) console.error(`Error deleting noise chunk: ${err}`);
-            });
-            return;
-        }
+                    if (err) console.error(`Error deleting noise chunk: ${err}`);
+                });
+                return;
+            }
     
-        if (!chunkQueues.has(userId)) chunkQueues.set(userId, []);
-        chunkQueues.get(userId).push({
-            file: chunkFile,
-            counter: chunkCounter,
-            duration: chunkDuration,
-            size: chunkSize
-        });    
+            if (!chunkQueues.has(userId)) chunkQueues.set(userId, []);
+            chunkQueues.get(userId).push({
+                file: chunkFile,
+                counter: chunkCounter,
+                duration: chunkDuration,
+                size: chunkSize
+            });    
 
-        processNextChunk(userId);
-    } catch (error) {
-        console.error(`Error processing chunk for user ${userId}:`, error);
-    }
-  });
+            processNextChunk(userId);
+        } catch (error) {
+            console.error(`Error processing chunk for user ${userId}:`, error);
+        }
+    });
 }
 
 // ASYNC FUNCTION TO PROCESS NEXT CHUNK IN QUEUE ------------
@@ -230,17 +283,25 @@ async function processNextChunk(userId) {
 
     try {
         console.log(`Processing chunk ${chunkData.counter} for ${recording.username} (queue: ${queue.length} remaining)`);
+    
+        if (chunkData.size < 50000) {
+            console.warn(`Chunk size too small (${chunkData.size} bytes), skipping transcription`);
+            userProcessing.set(userId, false);
+            fs.unlink(chunkData.file, (err) => {
+                if (err) console.error(`Error deleting noise chunk: ${err}`);
+            });
+            return;
+        }
         
         await transcribeChunk(chunkData.file, userId, recording.username, currentSessionId, chunkData.counter);
         
-        console.log(`✓ Completed chunk ${chunkData.counter} for ${recording.username}`);
+        console.log(`Completed chunk ${chunkData.counter} for ${recording.username}`);
     } catch (err) {
         console.error(`Error transcribing chunk ${chunkData.counter} for user ${userId}:`, err);
     } finally {
         userProcessing.set(userId, false);
-        // Process next chunk if any
         if (queue.length > 0) {
-            setTimeout(() => processNextChunk(userId), 100); // Small delay to prevent overwhelming
+            setTimeout(() => processNextChunk(userId), 100); 
         }
     }
 }
