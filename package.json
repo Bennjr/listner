@@ -23,6 +23,7 @@
     "@google/genai": "^1.16.0",
     "@snazzah/davey": "^0.1.6",
     "discord.js": "^14.22.1",
+    "dotenv": "^17.2.2",
     "lamejs": "^1.2.1",
     "libsodium-wrappers": "^0.7.15",
     "prism-media": "^1.3.5",
