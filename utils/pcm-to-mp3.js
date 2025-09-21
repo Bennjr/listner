@@ -15,7 +15,7 @@ async function convert() {
 
         if (!fs.existsSync(pcmPath)) {
             throw new Error(`PCM file not found: ${pcmPath}`);
-        }
+        }https://powerpoint.cloud.microsoft/
 
         const ffmpegCmd = [
             'ffmpeg',

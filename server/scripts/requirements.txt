@@ -1,1 +1,1 @@
-openai-whisper
+faster-whisper

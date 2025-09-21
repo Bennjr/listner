@@ -1,6 +1,0 @@
-@discordjs
-@google/genai
-@snazzah/davey
-uuid
-prism-media
-python-shell

@@ -1,6 +1,7 @@
 const {joinVoiceChannel, getVoiceConnection } = require("@discordjs/voice")
 const {SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder} = require("discord.js")
 const fs = require("fs");
+const recordings = require("./recordManager");
 
 module.exports = {
 	data: new SlashCommandBuilder()
@@ -13,8 +14,10 @@ module.exports = {
 		}
 		connection.destroy();
 
-		if (JSON.parse(fs.readFileSync("server/metadata.json", "utf8")).recState === true) {
-			const results = module.exports.stopAllRecordings();
+		const recState = recordings.getRecordingState();
+
+		if (recState.isRecording === true) {
+			const results = recordings.stopAllRecordings();
 			await interaction.reply(`Stopped recording. Processed ${results.individualRecordings.length} individual recordings.`);
 
 			const transcript = 'This is the transcribed text of your recording.'; 

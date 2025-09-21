@@ -105,13 +105,10 @@ module.exports = {
     };
     
     connection.receiver.speaking.on("start", (userId) => {
-        console.log(`${userId} start`);
         speakingHandler(userId);
     });
 
-    connection.receiver.speaking.on("end", (userId) => {
-        console.log(`${userId} end`);
-    });
+    connection.receiver.speaking.on("end", () => {});
 
     //HANDLE CONNECTION ERRORS ---------------------------------
     console.log(`Succesfully setup mixed archive for session ${sessionId}`);
@@ -326,28 +323,30 @@ async function processNextChunk(userId) {
 // TRANSSCRIBE CHUNK -----------------------------------------
 async function transcribeChunk(chunkFile, userId, username, sessionId, chunkCount) {
     console.log(`Transcribing chunk for user ${userId}`);
-    try {
-      const { PythonShell } = require(`python-shell`);
-      const options = {
-        scriptPath: `server/scripts`,
-        args: [chunkFile, userId, username, sessionId],
-        pythonOptions: [`-u`],
-      };
+    const { PythonShell } = require("python-shell");
 
-      PythonShell.run('whisper.py', options, function(err, results) {
-          if (err) {
-              console.error(`Transcription error for ${username}:`, err);
-          } else {
-              console.log(`Transcribed ${username} chunk ${chunkCount}`);
-              if (results && results.length > 0) {
-                  console.log(`Result: "${results.join(' ').trim()}"`);
-              }
-          }
-      }); 
-    } catch (error) {
-      console.error(`Error transcribing chunk for ${userId}:`, error);
-    }
+    return new Promise((resolve, reject) => {
+        const options = {
+            scriptPath: "server/scripts",
+            args: [chunkFile, userId, username, sessionId],
+            pythonOptions: ["-u"],
+        };
+
+        PythonShell.run("whisper.py", options, (err, results) => {
+            if (err) {
+                console.error(`Transcription error for ${username}:`, err);
+                reject(err);
+            } else {
+                console.log(`Transcribed ${username} chunk ${chunkCount}`);
+                if (results && results.length > 0) {
+                    console.log(`Result: "${results.join(" ").trim()}"`);
+                }
+                resolve(results);
+            }
+        });
+    });
 }
+
 
 // SETUP MIXED ARCHIVE ---------------------------------------
 function setupMixedArchive(basePath) {
@@ -418,10 +417,21 @@ module.exports.stopAllRecordings = function () {
     };
 
     // Stop individual recordings
+    activeSubscriptions.forEach((sub, userId) => {
+        console.log(`Stopping active chunk for user ${userId}`);
+        sub.silenceTimer && clearTimeout(sub.silenceTimer);
+        sub.silenceInterval && clearInterval(sub.silenceInterval);
+        sub.stream?.destroy();
+        sub.decoder?.destroy();
+        sub.output?.end();
+    });
+    activeSubscriptions.clear();
+    userCurrentlyChunking.forEach((val, userId) => userCurrentlyChunking.set(userId, false));
+
     activeUserRecordings.forEach((recording, userId) => {
         const chunkCount = userChunkCounters.get(userId) || 0;
         const duration = Date.now() - recording.startTime;
-        
+
         results.individualRecordings.push({
             userId,
             username: recording.username,
@@ -429,11 +439,10 @@ module.exports.stopAllRecordings = function () {
             chunks: chunkCount,
             sessionId: recording.sessionId
         });
-        
+
         console.log(`Stopped chunking for ${recording.username}: ${duration}ms, ${chunkCount} chunks`);
     });
 
-    // Stop mixed archive
     if (mixedArchiveRecording) {
         mixedArchiveRecording.stream.end();
         results.mixedArchive = {
@@ -443,12 +452,10 @@ module.exports.stopAllRecordings = function () {
         console.log(`Stopped mixed archive: ${results.mixedArchive.duration}ms`);
     }
 
-    // Remove all event listeners
     if (currentConnection) {
         currentConnection.receiver.speaking.removeAllListeners("start");
     }
 
-    // Clean up all state
     activeUserRecordings.clear();
     chunkQueues.clear();
     userProcessing.clear();
@@ -458,7 +465,6 @@ module.exports.stopAllRecordings = function () {
     currentSessionId = null;
     recState = false;
     
-    // Update metadata
     try {
         const metadataPath = "server/metadata.json";
         if (fs.existsSync(metadataPath)) {
