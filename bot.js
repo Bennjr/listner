@@ -47,7 +47,7 @@ for (const file of commandFiles) {
     }
 }
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
     console.log(`Logged in as ${client.user.tag}!`)
 
     const rest = new REST().setToken(TEMP_KEY)

@@ -12,18 +12,23 @@ module.exports = {
 		if (!connection) {
 			return await interaction.reply('The bot is not in a voice channel');
 		}
-		connection.destroy();
 
 		const recState = recordings.getRecordingState();
-
 		if (recState.isRecording === true) {
+			const metadataPath = "server/metadata.json";
+			const metadata = JSON.parse(fs.readFileSync(metadataPath));
+			const basepath = metadata.basepath;
 			const results = recordings.stopAllRecordings();
-			await interaction.reply(`Stopped recording. Processed ${results.individualRecordings.length} individual recordings.`);
 
 			const transcript = 'This is the transcribed text of your recording.'; 
-			const recordingLength = '1:45';
+			let recordingLength = 'Unknown';
+			try {
+				recordingLength = getPcmDuration(`${basepath}/archive/mixed.pcm`);
+			} catch (error) {
+				console.error('Error getting recording length:', error);
+			}
 			const fileName = 'mixed.mp3';
-		
+			
 			const embed = new EmbedBuilder()
 				.setTitle('Transcription Ready')
 				.setDescription(transcript)
@@ -35,17 +40,17 @@ module.exports = {
 				)
 				.setFooter({ text: 'Click a button below to save or discard' });
 
-			const row = new ActionRowBuilder()
-				.addComponents(
-					new ButtonBuilder()
-						.setCustomId('save')
-						.setLabel('Save')
-						.setStyle(ButtonStyle.Success),
-					new ButtonBuilder()
-						.setCustomId('discard')
-						.setLabel('Discard')
-						.setStyle(ButtonStyle.Danger)
-				);
+				const row = new ActionRowBuilder()
+					.addComponents(
+						new ButtonBuilder()
+							.setCustomId('save')
+							.setLabel('Save')
+							.setStyle(ButtonStyle.Success),
+						new ButtonBuilder()
+							.setCustomId('discard')
+							.setLabel('Discard')
+							.setStyle(ButtonStyle.Danger)
+					);
 
 			await interaction.reply({ embeds: [embed], components: [row] });
 
@@ -59,14 +64,12 @@ module.exports = {
 					const metadata = JSON.parse(fs.readFileSync("server/metadata.json"));
 					const basepath = metadata.basepath;
 
-					await interaction.reply("Starting save process...");
-
 					return Promise.all([
 						runChild("./utils/gemini.js", "Gemini"),
 						runChild("./utils/pcm-to-mp3.js", "Convert")
 					]).then(async () => {
 						console.log("Both Gemini and Convertion done");
-					
+						const channel = interaction.channel;
 						const threadChannel = await channel.threads.create({
 							name: `Summering av Bibelstudie: ${new Date().toLocaleDateString()}`,
 							autoArchiveDuration: 10080,
@@ -83,10 +86,10 @@ module.exports = {
 								},
 								{
 									attachment: `${basepath}/archive/mixed.txt`,
-									name: "mixed.mp3"
+									name: "mixed.txt"
 								}
 							]
-						})
+						});
 					
 						await interaction.editReply(`Save process completed! Saved to ${channel.name}`);
 						collector.stop();
@@ -104,7 +107,7 @@ module.exports = {
 
 
 					if (fs.existsSync(basepath)) {
-						fs.rmdirSync(basepath, { recursive: true });
+						fs.rmSync(basepath, { recursive: true, force: true });
 					}
 					collector.stop();
 				}
@@ -115,6 +118,15 @@ module.exports = {
 					interaction.editReply({ content: 'No action taken. Collector timed out.', components: [] });
 				}
 			});
-		}
+		} 
 	}
+}
+
+function getPcmDuration(filePath, sampleRate = 48000, channels = 2, bitDepth = 16) {
+    const stats = fs.statSync(filePath);
+    const bytesPerSample = bitDepth / 8;
+    const frameSize = channels * bytesPerSample;
+    const numSamples = stats.size / frameSize;
+    const durationSeconds = numSamples / sampleRate;
+    return durationSeconds;
 }
