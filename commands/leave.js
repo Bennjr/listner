@@ -117,7 +117,7 @@ module.exports = {
 						console.log("Both Gemini and Convertion done");
 
 						let forumChannel = interaction.guild.channels.cache.find(
-							ch => ch.name === 'Study' && ch.type === ChannelType.GuildForum
+							ch => ch.name === 'bibelstudie' && ch.type === ChannelType.GuildForum
 						);
 
 						if (!forumChannel) {
