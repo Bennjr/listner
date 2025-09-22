@@ -12,7 +12,7 @@ async function main() {
     const fileText = fs.readFileSync(`${basepath}/archive/mixed.txt`, "utf8");
     const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: fileText
+        contents: `Oppsummer følgende innhold på norsk: ${fileText}`
     });
     console.log(response.text);
     fs.writeFileSync(`${basepath}/archive/summerized.txt`, response.text);

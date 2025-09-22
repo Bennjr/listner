@@ -1,7 +1,51 @@
 const {joinVoiceChannel, getVoiceConnection } = require("@discordjs/voice")
-const {SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder} = require("discord.js")
+const {SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType, ForumChannel} = require("discord.js")
 const fs = require("fs");
 const recordings = require("./recordManager");
+const { spawn } = require('child_process');
+
+function getPcmDuration(filePath) {
+    try {
+        const stats = fs.statSync(filePath);
+        const fileSizeInBytes = stats.size;
+        const sampleRate = 48000;
+        const channels = 2;
+        const bytesPerSample = 2; // s16le
+        const durationInSeconds = fileSizeInBytes / (sampleRate * channels * bytesPerSample);
+        return durationInSeconds.toFixed(2);
+    } catch (error) {
+        console.error(`Error getting PCM duration for ${filePath}:`, error);
+        return 'Unknown';
+    }
+}
+
+function runChild(path, name) {
+    return new Promise((resolve, reject) => {
+        const process = spawn('node', [path]);
+
+        process.stdout.on('data', (data) => {
+            console.log(`[${name}] stdout: ${data}`);
+        });
+
+        process.stderr.on('data', (data) => {
+            console.error(`[${name}] stderr: ${data}`);
+        });
+
+        process.on('close', (code) => {
+            console.log(`[${name}] child process exited with code ${code}`);
+            if (code === 0) {
+                resolve();
+            } else {
+                reject(new Error(`[${name}] process exited with code ${code}`));
+            }
+        });
+
+        process.on('error', (err) => {
+            console.error(`[${name}] Failed to start subprocess.`, err);
+            reject(err);
+        });
+    });
+}
 
 module.exports = {
 	data: new SlashCommandBuilder()
@@ -12,6 +56,8 @@ module.exports = {
 		if (!connection) {
 			return await interaction.reply('The bot is not in a voice channel');
 		}
+
+		connection.destroy();
 
 		const recState = recordings.getRecordingState();
 		if (recState.isRecording === true) {
@@ -34,7 +80,7 @@ module.exports = {
 				.setDescription(transcript)
 				.setColor(0x1abc9c)
 				.addFields(
-					{ name: 'Recording Length', value: recordingLength, inline: true },
+					{ name: 'Recording Length', value: `${recordingLength}s`, inline: true },
 					{ name: 'File Name', value: fileName, inline: true },
 					{ name: 'Date', value: new Date().toLocaleString(), inline: false }
 				)
@@ -69,30 +115,41 @@ module.exports = {
 						runChild("./utils/pcm-to-mp3.js", "Convert")
 					]).then(async () => {
 						console.log("Both Gemini and Convertion done");
-						const channel = interaction.channel;
-						const threadChannel = await channel.threads.create({
+
+						let forumChannel = interaction.guild.channels.cache.find(
+							ch => ch.name === 'Study' && ch.type === ChannelType.GuildForum
+						);
+
+						if (!forumChannel) {
+							forumChannel = await interaction.guild.channels.create({
+								name: 'bibelstudie',
+								type: ChannelType.GuildForum,
+								topic: 'Forum for Bibelstudie discussions',
+								defaultThreadRateLimitPerUser: 1440,
+								reason: 'Automated creation of forum channel for sessions',
+							});
+							console.log(`Created new forum channel: ${forumChannel.name}`);
+						} else {
+							console.log(`Using existing forum channel: ${forumChannel.name}`);
+						}
+
+						const summaryText = fs.readFileSync(`${basepath}/archive/summerized.txt`, "utf8");
+						
+						const forumPost = await forumChannel.threads.create({
 							name: `Summering av Bibelstudie: ${new Date().toLocaleDateString()}`,
 							autoArchiveDuration: 10080,
-							reason: "Automated"
-						});
-
-						const textContent = fs.readFileSync(`${basepath}/archive/mixed.txt`, "utf8");
-						await threadChannel.send({
-							content: textContent,
-							files: [
+							reason: "Automated session summary",
+							message: {
+							  content: summaryText,
+							  files: [
 								{
-									attachment: `${basepath}/archive/summerized.txt`,
-									name: "summerized.txt"
-								},
-								{
-									attachment: `${basepath}/archive/mixed.txt`,
-									name: "mixed.txt"
+								  attachment: `${basepath}/archive/mixed.txt`,
+								  name: "mixed.txt"
 								}
-							]
-						});
-					
-						await interaction.editReply(`Save process completed! Saved to ${channel.name}`);
-						collector.stop();
+							  ]
+							}
+						  });
+						console.log(`Sent to forum channel: ${forumChannel.name}`);
 					}).catch(async (err) => {
 						console.error("Process error:", err);
 						await interaction.editReply(`Error: ${err.message}`);

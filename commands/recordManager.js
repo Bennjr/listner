@@ -20,10 +20,12 @@ let mixedArchiveRecording = null;
 let recState = false;
 let currentConnection = null;
 let currentSessionId = null;
+const silenceThreshold = 2000; 
+const checkInterval = 500; 
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName("record")
+    .setName("listen")
     .setDescription("Recording both individual and mixed archive"),
   async execute(interaction) {
     // BASIC CHECKS ------------------------------------------
@@ -78,37 +80,22 @@ module.exports = {
     await interaction.reply(`Started recording, session ID: ${sessionId}`);
 
     // SPEAKING HANDLER --------------------------------------
-    const speakingHandler = (speakingUserId) => {
-        const debounceTimeout = 1000;
-        const timeoutId = debounceTimer.get(speakingUserId);
-        console.log(`User ${speakingUserId} speaking [timer: ${debounceTimeout}ms]`);
-
-        if (timeoutId) {
-            clearTimeout(timeoutId);
+    const speakingHandler = (userId) => {
+        if (!activeUserRecordings.has(userId)) {
+            console.log(`New user detected: ${userId}`);
+            setupUserRecording(userId, basePath, sessionId);
+            setupUserMixedArchive(connection, userId);
+            userCurrentlyChunking.set(userId, false);
         }
-
-        const timeout = setTimeout(() => {
-            debounceTimer.delete(speakingUserId);
-
-            if (!activeUserRecordings.has(speakingUserId)) {
-                console.log(`New user detected: ${speakingUserId}`);
-                setupUserRecording(speakingUserId, basePath, sessionId);
-                setupUserMixedArchive(connection, speakingUserId);
-                userCurrentlyChunking.set(speakingUserId, false);
-            }
-
-            startUserChunking(connection, speakingUserId);
-            //testChunking(connection, speakingUserId);
-        }, debounceTimeout);
-
-        debounceTimer.set(speakingUserId, timeout);
+    
+        if (!userCurrentlyChunking.get(userId)) {
+            startUserChunking(connection, userId);
+        }
     };
     
     connection.receiver.speaking.on("start", (userId) => {
         speakingHandler(userId);
     });
-
-    connection.receiver.speaking.on("end", () => {});
 
     //HANDLE CONNECTION ERRORS ---------------------------------
     console.log(`Succesfully setup mixed archive for session ${sessionId}`);
@@ -158,30 +145,16 @@ function setupUserRecording(userId, basePath, sessionId) {
 // START USER CHUNKING --------------------------------------------
 function startUserChunking(connection, userId) {
     const recording = activeUserRecordings.get(userId);
-    if (!recording) {
-        console.warn(`No recording found for user ${userId}`);
-        return;
-    }
+    if (!recording) return;
 
-    // Clean up previous subscription to prevent memory leaks
-    if (activeSubscriptions.has(userId)) {
-        const prevSub = activeSubscriptions.get(userId);
-        console.log(`Cleaning up previous subscription for user ${userId}`);
-        prevSub.stream?.destroy();
-        prevSub.decoder?.destroy();
-        prevSub.output?.destroy();
-        activeSubscriptions.delete(userId);
-    }
-
-    let chunkCounter = (userChunkCounters.get(userId) || 0) + 1;
+    // Track chunk number
+    const chunkCounter = (userChunkCounters.get(userId) || 0) + 1;
     userChunkCounters.set(userId, chunkCounter);
 
     console.log(`Starting chunk ${chunkCounter} for user ${userId}`);
 
     const subscription = connection.receiver.subscribe(userId, {
-        end: {
-            behavior: EndBehaviorType.Manual,
-        },
+        end: { behavior: EndBehaviorType.Never }, // we handle ending manually
     });
 
     const decoder = new prism.opus.Decoder({
@@ -195,66 +168,45 @@ function startUserChunking(connection, userId) {
     const output = fs.createWriteStream(chunkFile);
 
     let lastChunkTime = Date.now();
-    let silenceTimer = null;
+    userCurrentlyChunking.set(userId, true);
 
     subscription.on("data", (chunk) => {
         decoder.write(chunk);
-        output.write(decoder.read(chunk));
-        console.log(`Received chunk for user ${userId}, size: ${chunk.length}`);
-        lastChunkTime = Date.now();
+        const decoded = decoder.read(chunk);
+        if (decoded) output.write(decoded);
 
-        // Reset silence timer if audio comes back before cutoff
-        if (silenceTimer) {
-            clearTimeout(silenceTimer);
-            silenceTimer = null;
-        }
+        lastChunkTime = Date.now();
+        // console.log(`Received chunk for user ${userId}, size: ${chunk.length}`);
     });
 
-    function closeChunk() {
-        console.log(`Silence detected for user ${userId}, closing chunk ${chunkCounter}`);
+    const interval = setInterval(() => {
+        if (Date.now() - lastChunkTime > silenceThreshold) {
+            console.log(`Silence detected for user ${userId}, closing chunk ${chunkCounter}`);
+            clearInterval(interval);
+            subscription.destroy();
+            decoder.end();
+            output.end();
 
-        output.end();
-        subscription.destroy();
-        decoder.end();
+            userCurrentlyChunking.set(userId, false);
 
-        try {
+            // queue chunk for transcription
             if (!chunkQueues.has(userId)) chunkQueues.set(userId, []);
             const stats = fs.statSync(chunkFile);
             chunkQueues.get(userId).push({
                 file: chunkFile,
                 counter: chunkCounter,
                 size: stats.size,
-                duration: Date.now() - lastChunkTime,
+                duration: Date.now() - lastChunkTime
             });
 
-            activeSubscriptions.delete(userId);
-        } catch (err) {
-            console.error(`Error finalizing chunk for user ${userId}:`, err);
+            // start processing next chunk if any
+            processNextChunk(userId);
         }
+    }, checkInterval);
 
-        processNextChunk(userId);
-    }
+    subscription.on("error", (err) => console.error(`Subscription error for user ${userId}:`, err));
 
-    const silenceInterval = setInterval(() => {
-        if (Date.now() - lastChunkTime > 2000 && !silenceTimer) {
-            silenceTimer = setTimeout(closeChunk, 100); // finalize after confirming silence
-        }
-    }, 500);
-
-    subscription.on("error", (error) => {
-        console.error(`Error in chunk stream for user ${userId}:`, error);
-    });
-
-    output.on("finish", () => {
-        clearInterval(silenceInterval);
-        console.log(`Chunk ${chunkCounter} FINISHED for user ${userId}`);
-    });
-
-    activeSubscriptions.set(userId, {
-        stream: subscription,
-        decoder: decoder,
-        output: output,
-    });
+    activeSubscriptions.set(userId, { stream: subscription, decoder, output });
 }
 
 function stopUserChunking(userId) {
@@ -274,79 +226,119 @@ function stopUserChunking(userId) {
 
 // ASYNC FUNCTION TO PROCESS NEXT CHUNK IN QUEUE ------------
 async function processNextChunk(userId) {
-    console.log(`Processing next chunk for user ${userId}`);
     if (userProcessing.get(userId)) {
-        console.log(`User ${userId} already processing, queuing chunk`);
+        console.log(`User ${userId} is already processing a chunk`);
         return;
     }
-    
     const queue = chunkQueues.get(userId);
-    console.log(`Chunk queue length for user ${userId}: ${queue?.length ?? 0}`);
     if (!queue || queue.length === 0) return;
 
     userProcessing.set(userId, true);
 
     const chunkData = queue.shift();
     const recording = activeUserRecordings.get(userId);
-    
     if (!recording) {
-        console.warn(`No recording found for user ${userId}, skipping chunk processing`);
         userProcessing.set(userId, false);
         return;
     }
 
     try {
-        console.log(`Processing chunk ${chunkData.counter} for ${recording.username} (queue: ${queue.length} remaining)`);
-    
         if (chunkData.size < 50000) {
-            console.warn(`Chunk size too small (${chunkData.size} bytes), skipping transcription`);
-            userProcessing.set(userId, false);
-            fs.unlink(chunkData.file, (err) => {
-                if (err) console.error(`Error deleting noise chunk: ${err}`);
-            });
-            return;
+            fs.unlink(chunkData.file, err => err && console.error(err));
+        } else {
+            console.log(`Transcribing chunk ${chunkData.counter} for ${recording.username}`);
+            await transcribeChunk(chunkData.file, userId, recording.username, currentSessionId, chunkData.counter);
+            console.log(`Completed chunk ${chunkData.counter} for ${recording.username}`);
         }
-        
-        await transcribeChunk(chunkData.file, userId, recording.username, currentSessionId, chunkData.counter);
-        
-        console.log(`Completed chunk ${chunkData.counter} for ${recording.username}`);
     } catch (err) {
-        console.error(`Error transcribing chunk ${chunkData.counter} for user ${userId}:`, err);
+        console.error(`Error transcribing chunk ${chunkData.counter}:`, err);
     } finally {
         userProcessing.set(userId, false);
-        if (queue.length > 0) {
-            setTimeout(() => processNextChunk(userId), 100); 
-        }
+        if (queue.length > 0) setTimeout(() => processNextChunk(userId), 50);
     }
 }
 
 // TRANSSCRIBE CHUNK -----------------------------------------
+
 async function transcribeChunk(chunkFile, userId, username, sessionId, chunkCount) {
-    console.log(`Transcribing chunk for user ${userId}`);
+    console.log(`[${chunkCount}] Starting transcription for user ${userId}`);
     const { PythonShell } = require("python-shell");
 
     return new Promise((resolve, reject) => {
+        const startTime = Date.now();
+        
         const options = {
             scriptPath: "server/scripts",
             args: [chunkFile, userId, username, sessionId],
             pythonOptions: ["-u"],
         };
 
-        PythonShell.run("whisper.py", options, (err, results) => {
-            if (err) {
-                console.error(`Transcription error for ${username}:`, err);
-                reject(err);
-            } else {
-                console.log(`Transcribed ${username} chunk ${chunkCount}`);
-                if (results && results.length > 0) {
-                    console.log(`Result: "${results.join(" ").trim()}"`);
-                }
-                resolve(results);
+        console.log(`[${chunkCount}] Creating PythonShell with args:`, options.args);
+
+        const pyshell = new PythonShell("whisper.py", options);
+        let allOutput = [];
+        let hasResolved = false;
+
+        pyshell.on('message', (message) => {
+            console.log(`[${chunkCount}] Python output:`, message);
+            allOutput.push(message);
+        });
+
+        pyshell.on('stderr', (stderr) => {
+            console.log(`[${chunkCount}] Python stderr:`, stderr);
+        });
+
+        pyshell.on('error', (error) => {
+            console.error(`[${chunkCount}] Python error:`, error);
+            if (!hasResolved) {
+                hasResolved = true;
+                reject(error);
             }
+        });
+
+        pyshell.on('close', (code) => {
+            const duration = Date.now() - startTime;
+            console.log(`[${chunkCount}] Python process closed with code ${code} after ${duration}ms`);
+            
+            if (hasResolved) return;
+            hasResolved = true;
+
+            if (code && code !== 0) {
+                reject(new Error(`Python script exited with code ${code}`));
+                return;
+            }
+
+            if (allOutput.length > 0) {
+                try {
+                    const lastLine = allOutput[allOutput.length - 1];
+                    const parsed = JSON.parse(lastLine);
+                    console.log(`[${chunkCount}] Parsed transcription:`, parsed.text);
+                    resolve(parsed);
+                } catch (parseError) {
+                    console.log(`[${chunkCount}] Could not parse JSON, returning raw output`);
+                    console.log(`[${chunkCount}] Parse error:`, parseError.message);
+                    resolve(allOutput);
+                }
+            } else {
+                console.log(`[${chunkCount}] No output from Python script`);
+                resolve(null);
+            }
+        });
+
+        const timeout = setTimeout(() => {
+            if (!hasResolved) {
+                console.error(`[${chunkCount}] Python process timeout, terminating...`);
+                pyshell.terminate();
+                hasResolved = true;
+                reject(new Error('Python process timeout'));
+            }
+        }, 120000);
+
+        pyshell.on('close', () => {
+            clearTimeout(timeout);
         });
     });
 }
-
 
 // SETUP MIXED ARCHIVE ---------------------------------------
 function setupMixedArchive(basePath) {

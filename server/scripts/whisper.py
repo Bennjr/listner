@@ -7,6 +7,7 @@ import subprocess
 import os
 import json
 
+
 def convert(pcm_file, mp3_file=None, cleanup_pcm=True):
     if mp3_file is None:
         mp3_file = Path(pcm_file).with_suffix('.mp3')
@@ -67,7 +68,7 @@ if __name__ == "__main__":
         
         # Load Whisper model and transcribe
         print("Trying to load the model")
-        model = WhisperModel("base", device="auto")  
+        model = WhisperModel("medium", device="auto")  
         print("Model loaded, starting transcription")
 
         segments, info = model.transcribe(
@@ -149,6 +150,8 @@ if __name__ == "__main__":
             print(f"Error saving mixed JSON: {e}")
 
         print("Transcription process completed successfully")
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0)
 
     except Exception as e:
         print(f"Error during transcription: {e}")
