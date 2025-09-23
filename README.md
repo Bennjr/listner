@@ -1,19 +1,47 @@
-This is a discord bot that records a voice channel and transcribes it using Gemini.
+-- 🔗 PRESTEPS 🔗--
 
--- TO INSTALL --
-To run it you have to have nodejs installed. Then run these commands:
+**Invite the bot to your server with the correct scopes:**
+You will have to make your own bot and invite it to your server with the correct scopes.
 
-npm install
+Firstly go to https://discord.com/developers/applications
+Click **new application**
+Give it a **name**
+Go to **Installation**
+Sctroll down to **Guild install**
+Select: Attach files, Connect, Create Private threads, Create Public Threads,
+Embed links, Manage channels, Manage threads, Read Message History
+Send messages, Send Messages in Threads, View channels
+**Invite** to your server
 
--- TO CONFIGURE --
-To configure it, you have to edit the config.json file. It should look like this:
+Scopes:
+1387420143302217748
+
+-- 📦 Without Docker 📦--
+
+**Install dependencies:**
+Node.js 22+
+Python 3.9+
+FFmpeg (must be in PATH)
+pip install faster-whisper
+
+-- 🐳 With Docker 🐳--
+
+**Build the docker image:**
+docker build -t listner .
+
+**Optional:**
+For docker gpu support:
+uncomment the line in .dockerfile
+
+**Run the docker container:**
+docker run -it listner
+
+-- ⚙️ Configuration ⚙️ --
+
+**Edit the config-headless.json to match your setup:**
 
 {
-"API_KEY": "your-api-key",
-"GUILD_ID": "your-guild-id",
-"GEMINI_API": "your-gemini-api"
+"API_KEY": "Your api key",
+"GUILD_ID": "Your guild id",
+"GEMINI_API": "Your gemini api key"
 }
-
--- TO RUN --
-To run it, you can run the following command:
-node bot.js

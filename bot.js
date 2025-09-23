@@ -10,11 +10,11 @@ process.env["HTTP_PROXY"] = "";
 let TEMP_KEY;
 let GUILD_ID;
 try {
-    const config = JSON.parse(fs.readFileSync("server/config.json"));
+    const config = JSON.parse(fs.readFileSync("server/config-headless.json"));
     TEMP_KEY = config.API_KEY;
     GUILD_ID = config.GUILD_ID;
 } catch (err) {
-    console.error("Missing APIs or missing config.json");
+    console.error("Missing APIs or missing config-headless.json");
 }
 
 fs.writeFileSync("server/metadata.json", JSON.stringify({
